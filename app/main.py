@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from app.services.github import get_pr_details
+from app.services.github import get_pr_details, get_pr_diff
 
 app = FastAPI()
 
@@ -18,11 +18,16 @@ def health_check():
 
 @app.post("/review")
 def create_review(request: ReviewRequest):
+    # Fetch PR metadata
     pr_details = get_pr_details(request.repository, request.pr_number)
+    
+    # Fetch PR diff
+    pr_diff = get_pr_diff(request.repository, request.pr_number)
     
     return {
         "message": "Review request received",
         "repository": request.repository,
         "pr_number": request.pr_number,
-        "pr_details": pr_details
+        "pr_details": pr_details,
+        "pr_diff": pr_diff
     }

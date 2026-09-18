@@ -52,3 +52,45 @@ def get_pr_details(repository: str, pr_number: int) -> dict:
             status_code=500, 
             detail="Error connecting to GitHub API"
         )
+
+def get_pr_diff(repository: str, pr_number: int) -> str:
+    """
+    Fetches the raw diff of a Pull Request from the GitHub REST API.
+    """
+    github_token = os.getenv("GITHUB_TOKEN")
+    
+    headers = {
+        # Using the v3.diff media type returns the raw diff text
+        "Accept": "application/vnd.github.v3.diff",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    
+    if github_token:
+        headers["Authorization"] = f"Bearer {github_token}"
+
+    url = f"https://api.github.com/repos/{repository}/pulls/{pr_number}"
+
+    try:
+        response = httpx.get(url, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        
+        # The diff is returned as plain text
+        return response.text
+    except httpx.HTTPStatusError as e:
+        error_msg = "GitHub API Error fetching diff"
+        try:
+            # Note: For diff endpoints, errors might still be returned as JSON.
+            error_data = e.response.json()
+            error_msg = error_data.get("message", "GitHub API Error fetching diff")
+        except Exception:
+            pass
+            
+        raise HTTPException(
+            status_code=e.response.status_code, 
+            detail=error_msg
+        )
+    except httpx.RequestError:
+        raise HTTPException(
+            status_code=500, 
+            detail="Error connecting to GitHub API for diff"
+        )
