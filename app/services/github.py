@@ -35,12 +35,20 @@ def get_pr_details(repository: str, pr_number: int) -> dict:
             "html_url": data.get("html_url")
         }
     except httpx.HTTPStatusError as e:
+        error_msg = "GitHub API Error"
+        try:
+            # Attempt to parse GitHub's JSON error message securely
+            error_data = e.response.json()
+            error_msg = error_data.get("message", "GitHub API Error")
+        except Exception:
+            pass
+            
         raise HTTPException(
             status_code=e.response.status_code, 
-            detail=f"GitHub API Error: {e.response.text}"
+            detail=error_msg
         )
-    except httpx.RequestError as e:
+    except httpx.RequestError:
         raise HTTPException(
             status_code=500, 
-            detail=f"Error connecting to GitHub API: {str(e)}"
+            detail="Error connecting to GitHub API"
         )
