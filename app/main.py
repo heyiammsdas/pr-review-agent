@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from app.services.github import get_pr_details, get_pr_diff
 from app.agents.security_agent import run_security_review
 from app.agents.quality_agent import run_quality_review
+from app.agents.testing_agent import run_testing_review
 
 app = FastAPI()
 
@@ -29,6 +30,7 @@ def create_review(request: ReviewRequest):
     # Run Agents Sequentially
     security_review = run_security_review(pr_diff)
     quality_review = run_quality_review(pr_diff)
+    testing_review = run_testing_review(pr_diff)
     
     return {
         "message": "Review request received",
@@ -37,5 +39,6 @@ def create_review(request: ReviewRequest):
         "pr_details": pr_details,
         "pr_diff": pr_diff,
         "security_review": security_review,
-        "quality_review": quality_review
+        "quality_review": quality_review,
+        "testing_review": testing_review
     }
