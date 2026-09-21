@@ -21,10 +21,10 @@ class ReviewIssue(BaseModel):
 class ReviewResponse(BaseModel):
     issues: List[ReviewIssue]
 
-def generate_pr_review(pr_diff: str) -> dict:
+def analyze_diff(pr_diff: str, system_prompt: str) -> dict:
     """
-    Sends the PR diff to Gemini and returns a structured JSON review regarding bugs,
-    security issues, and code quality.
+    Sends the PR diff and a custom system prompt to Gemini, 
+    returning a structured JSON review based on ReviewResponse schema.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_gemini_api_key_here":
@@ -36,16 +36,8 @@ def generate_pr_review(pr_diff: str) -> dict:
     try:
         client = genai.Client(api_key=api_key)
         
-        prompt = (
-            "You are an expert software engineer and code reviewer.\n"
-            "Review the following Pull Request diff for potential bugs, security problems, "
-            "code quality issues, performance bottlenecks, and testing gaps.\n"
-            "You must return the review STRICTLY in JSON format matching the schema.\n"
-            "If no issues are found, return an empty list for 'issues'.\n\n"
-            f"Here is the diff:\n\n{pr_diff}"
-        )
+        prompt = f"{system_prompt}\n\nHere is the diff:\n\n{pr_diff}"
         
-        # Make the request to Gemini asking for structured JSON matching our Pydantic model
         response = client.models.generate_content(
             model='gemini-3.6-flash',
             contents=prompt,
@@ -55,7 +47,6 @@ def generate_pr_review(pr_diff: str) -> dict:
             ),
         )
         
-        # Validate the response text strictly with Pydantic
         try:
             parsed_data = json.loads(response.text)
             validated_review = ReviewResponse(**parsed_data)
@@ -70,7 +61,6 @@ def generate_pr_review(pr_diff: str) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        # We print to local logs for debugging but NEVER expose the key or stack trace to the client.
         print(f"LLM Error: {str(e)}")
         raise HTTPException(
             status_code=500,
