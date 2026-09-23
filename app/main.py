@@ -1,12 +1,12 @@
-import asyncio
-import time
-from fastapi import FastAPI
+import hmac
+import hashlib
+import os
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Header
 from pydantic import BaseModel
-from app.services.github import get_pr_details, get_pr_diff
-from app.agents.security_agent import run_security_review
-from app.agents.quality_agent import run_quality_review
-from app.agents.testing_agent import run_testing_review
-from app.agents.aggregator_agent import run_aggregator_agent
+from dotenv import load_dotenv
+from app.services.review import process_pr_review
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -22,66 +22,77 @@ def read_root():
 def health_check():
     return {"status": "healthy"}
 
-async def run_agent_safe(agent_func, pr_diff: str, agent_name: str) -> dict:
-    start_time = time.time()
-    print(f"[{agent_name}] Starting...")
-    try:
-        # Run synchronous LLM call in a thread pool to avoid blocking the event loop
-        result = await asyncio.to_thread(agent_func, pr_diff)
-        duration = time.time() - start_time
-        print(f"[{agent_name}] Finished successfully in {duration:.2f}s")
-        return result
-    except Exception as e:
-        duration = time.time() - start_time
-        print(f"[{agent_name}] Failed in {duration:.2f}s: {e}")
-        # Return empty/error structure so aggregator doesn't crash
-        return {"issues": []}
-
 @app.post("/review")
 async def create_review(request: ReviewRequest):
-    # Fetch PR metadata and diff in a thread pool so it doesn't block
-    pr_details = await asyncio.to_thread(get_pr_details, request.repository, request.pr_number)
-    pr_diff = await asyncio.to_thread(get_pr_diff, request.repository, request.pr_number)
-    
-    print("---")
-    print("Starting specialized agents concurrently...")
-    total_start_time = time.time()
-    
-    # Run Agents Concurrently
-    security_task = run_agent_safe(run_security_review, pr_diff, "Security Agent")
-    quality_task = run_agent_safe(run_quality_review, pr_diff, "Quality Agent")
-    testing_task = run_agent_safe(run_testing_review, pr_diff, "Testing Agent")
-    
-    security_review, quality_review, testing_review = await asyncio.gather(
-        security_task, quality_task, testing_task
-    )
-    
-    specialized_duration = time.time() - total_start_time
-    print(f"All specialized agents completed in {specialized_duration:.2f}s")
-    
-    # Run Aggregator Agent
-    print("[Aggregator Agent] Starting...")
-    agg_start_time = time.time()
-    try:
-        final_review = await asyncio.to_thread(
-            run_aggregator_agent, security_review, quality_review, testing_review
-        )
-        agg_duration = time.time() - agg_start_time
-        print(f"[Aggregator Agent] Finished successfully in {agg_duration:.2f}s")
-    except Exception as e:
-        print(f"[Aggregator Agent] Failed: {e}")
-        final_review = {
-            "summary": "Aggregation failed due to API error.", 
-            "issues": [], 
-            "statistics": {"total": 0, "security": 0, "code_quality": 0, "testing": 0}
-        }
-    print("---")
-    
+    result = await process_pr_review(request.repository, request.pr_number)
     return {
         "message": "Review request received",
-        "repository": request.repository,
-        "pr_number": request.pr_number,
-        "pr_details": pr_details,
-        "pr_diff": pr_diff,
-        "final_review": final_review
+        **result
     }
+
+async def run_background_review(repository: str, pr_number: int):
+    try:
+        await process_pr_review(repository, pr_number)
+        print(f"Background review for {repository} PR #{pr_number} completed.")
+    except Exception as e:
+        print(f"Background review for {repository} PR #{pr_number} failed: {e}")
+
+@app.post("/webhook/github")
+async def github_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_hub_signature_256: str = Header(None)
+):
+    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
+    
+    if not webhook_secret:
+        raise HTTPException(status_code=500, detail="Webhook secret not configured")
+        
+    if not x_hub_signature_256:
+        raise HTTPException(status_code=401, detail="Missing signature")
+        
+    payload_body = await request.body()
+    
+    # Verify signature
+    signature = "sha256=" + hmac.new(
+        webhook_secret.encode(),
+        payload_body,
+        hashlib.sha256
+    ).hexdigest()
+    
+    if not hmac.compare_digest(signature, x_hub_signature_256):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+        
+    payload = await request.json()
+    
+    event_type = request.headers.get("X-GitHub-Event")
+    if event_type == "ping":
+        return {"message": "pong"}
+        
+    if event_type != "pull_request":
+        return {"message": f"Ignored event: {event_type}"}
+        
+    action = payload.get("action")
+    if action not in ["opened", "synchronize", "reopened"]:
+        return {"message": f"Ignored PR action: {action}"}
+        
+    pr = payload.get("pull_request", {})
+    repo = payload.get("repository", {})
+    
+    pr_number = pr.get("number")
+    repository = repo.get("full_name")
+    
+    if not pr_number or not repository:
+        raise HTTPException(status_code=400, detail="Missing PR number or repository in payload")
+        
+    print(f"Received GitHub webhook")
+    print(f"Event: {event_type}")
+    print(f"Action: {action}")
+    print(f"Repository: {repository}")
+    print(f"PR: #{pr_number}")
+    print(f"Starting review in background...")
+    
+    # Schedule the review to run in the background so GitHub gets a quick 200 response
+    background_tasks.add_task(run_background_review, repository, pr_number)
+    
+    return {"message": "Webhook accepted, review started"}
