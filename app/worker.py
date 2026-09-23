@@ -1,62 +1,73 @@
-import os
 import json
-import time
 import asyncio
-import redis
-from dotenv import load_dotenv
+from app.services.job_queue import pop_job_from_queue, get_job_status, update_job_status
+from app.graph.review_graph import review_graph
 
-load_dotenv()
-
-from app.services.review import process_pr_review
-from app.services.job_queue import get_redis_client
-
-async def run_worker():
-    print("Starting background worker...")
-    try:
-        r = get_redis_client()
-        # Test connection
-        r.ping()
-        print("Connected to Redis. Waiting for jobs on 'pr_review_queue'...")
-    except redis.RedisError as e:
-        print(f"Worker failed to connect to Redis: {e}")
+async def process_job(job_id: str):
+    """
+    Retrieves the job from Redis, runs the LangGraph review pipeline,
+    and updates the job status back in Redis.
+    """
+    # 1. Fetch job info
+    job_data_str = get_job_status(job_id)
+    if not job_data_str:
+        print(f"Job {job_id} data not found in Redis!")
         return
+    
+    job_data = json.loads(job_data_str)
+    
+    # 2. Update status to 'processing'
+    job_data["status"] = "processing"
+    update_job_status(job_id, job_data)
+    print(f"Job started: {job_id}")
+    
+    # Initialize the starting state for LangGraph
+    initial_state = {
+        "repository": job_data["repository"],
+        "pr_number": job_data["pr_number"],
+        "pr_details": {},
+        "pr_diff": "",
+        "security_review": {},
+        "quality_review": {},
+        "testing_review": {},
+        "final_review": {}
+    }
+    
+    # 3. Execute the LangGraph workflow
+    try:
+        final_state = await review_graph.ainvoke(initial_state)
+        
+        # 4. Mark completed and store the result
+        job_data["status"] = "completed"
+        job_data["result"] = final_state.get("final_review", {})
+        print(f"Job completed: {job_id}")
+        
+    except Exception as e:
+        # Mark failed on error
+        job_data["status"] = "failed"
+        # Store a safe error message, not exposing secrets
+        job_data["error"] = "An internal error occurred during review processing."
+        print(f"Job failed: {job_id}")
+    
+    # Save final status back to Redis
+    update_job_status(job_id, job_data)
 
+def run_worker():
+    """
+    Simple worker daemon that blocks on the Redis queue, popping jobs as they arrive.
+    """
+    print("Worker is waiting for jobs on Redis queue...")
     while True:
         try:
-            # Block until a job is available (timeout of 5 seconds to gracefully handle interrupts)
-            result = r.brpop("pr_review_queue", timeout=5)
+            # brpop blocks until a job is available in the queue
+            result = pop_job_from_queue(timeout=0)
             if result:
-                _, job_data_bytes = result
-                job_data = json.loads(job_data_bytes)
-                print("\nWorker started job")
-                print(f"Payload: {job_data}")
-                
-                repository = job_data.get("repository")
-                pr_number = job_data.get("pr_number")
-                
-                if not repository or not pr_number:
-                    print("Malformed job: missing repository or pr_number. Skipping.")
-                    continue
-
-                print(f"Processing review for {repository} PR #{pr_number}...")
-                
-                # Execute the existing review pipeline
-                try:
-                    await process_pr_review(repository, pr_number)
-                    print("Job completed")
-                except Exception as e:
-                    print(f"Job failed during processing: {e}")
-        except json.JSONDecodeError:
-            print("Malformed job: invalid JSON. Skipping.")
-        except redis.RedisError as e:
-            print(f"Redis error during polling: {e}")
-            time.sleep(5) # Backoff on connection lost
+                _, job_id = result
+                # Run the async job processing natively
+                asyncio.run(process_job(job_id))
         except Exception as e:
-            print(f"Unexpected worker error: {e}")
-            time.sleep(5)
+            print(f"Worker encountered a fatal Redis connection error: {e}")
+            break
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(run_worker())
-    except KeyboardInterrupt:
-        print("\nWorker stopped.")
+    run_worker()

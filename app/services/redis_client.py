@@ -7,10 +7,7 @@ load_dotenv()
 def get_redis_connection():
     """
     Creates and returns a connection to the Redis server.
-    Defaults to localhost:6379
     """
-    host = os.getenv("REDIS_HOST", "localhost")
-    port = int(os.getenv("REDIS_PORT", 6379))
-    
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     # decode_responses=True ensures we get strings instead of bytes
-    return redis.Redis(host=host, port=port, decode_responses=True)
+    return redis.from_url(redis_url, decode_responses=True)

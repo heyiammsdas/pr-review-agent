@@ -6,13 +6,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from app.services.redis_client import get_redis_connection
+from app.services.job_queue import push_job_to_queue, get_job_status
 
 load_dotenv()
 
 app = FastAPI()
-redis_client = get_redis_connection()
-QUEUE_NAME = "pr_review_queue"
 
 class ReviewRequest(BaseModel):
     repository: str
@@ -36,27 +34,25 @@ async def create_review(request: ReviewRequest):
         "job_id": job_id,
         "repository": request.repository,
         "pr_number": request.pr_number,
-        "status": "queued"
+        "status": "queued",
+        "result": None
     }
     
-    # 3. Save initial status to Redis
-    redis_client.set(f"job:{job_id}", json.dumps(job_data))
+    # 3. Push job and initial state to Redis queue
+    push_job_to_queue(job_id, job_data)
     
-    # 4. Push job to the processing queue
-    redis_client.lpush(QUEUE_NAME, job_id)
+    print(f"Job queued: {job_id}")
     
-    print(f"Job queued: {job_id} for {request.repository} PR #{request.pr_number}")
-    
-    # 5. Return immediately
+    # 4. Return immediately
     return {
-        "message": "Review job queued",
-        "job_id": job_id
+        "job_id": job_id,
+        "status": "queued"
     }
 
 @app.get("/review/{job_id}")
 async def get_review_status(job_id: str):
     # 1. Fetch job data from Redis
-    job_data_str = redis_client.get(f"job:{job_id}")
+    job_data_str = get_job_status(job_id)
     
     if not job_data_str:
         raise HTTPException(status_code=404, detail="Job not found")

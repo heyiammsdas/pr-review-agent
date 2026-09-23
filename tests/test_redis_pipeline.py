@@ -33,7 +33,7 @@ def mock_get_redis_connection():
 # 2. Patch get_redis_connection globally before importing the app
 with patch('app.services.redis_client.get_redis_connection', side_effect=mock_get_redis_connection):
     from app.main import app
-    from worker import process_job
+    from app.worker import process_job
 
 client = TestClient(app)
 
