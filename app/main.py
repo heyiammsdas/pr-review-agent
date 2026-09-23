@@ -1,14 +1,18 @@
 import asyncio
 import time
-from fastapi import FastAPI
+import uuid
+import json
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from app.graph.review_graph import review_graph
+from app.services.redis_client import get_redis_connection
 
 load_dotenv()
 
 app = FastAPI()
+redis_client = get_redis_connection()
+QUEUE_NAME = "pr_review_queue"
 
 class ReviewRequest(BaseModel):
     repository: str
@@ -24,36 +28,38 @@ def health_check():
 
 @app.post("/review")
 async def create_review(request: ReviewRequest):
-    print("\n--- Graph started ---")
-    start_time = time.time()
+    # 1. Generate a unique job ID
+    job_id = str(uuid.uuid4())
     
-    # Initialize the starting state
-    initial_state = {
+    # 2. Create the job data
+    job_data = {
+        "job_id": job_id,
         "repository": request.repository,
         "pr_number": request.pr_number,
-        "pr_details": {},
-        "pr_diff": "",
-        "security_review": {},
-        "quality_review": {},
-        "testing_review": {},
-        "final_review": {}
+        "status": "queued"
     }
     
-    # Run the graph using native LangGraph ainvoke
-    try:
-        final_state = await review_graph.ainvoke(initial_state)
-    except Exception as e:
-        print(f"Graph execution failed: {e}")
-        return {"message": "Review request failed"}
-        
-    duration = time.time() - start_time
-    print(f"--- Graph finished in {duration:.2f}s ---")
+    # 3. Save initial status to Redis
+    redis_client.set(f"job:{job_id}", json.dumps(job_data))
     
+    # 4. Push job to the processing queue
+    redis_client.lpush(QUEUE_NAME, job_id)
+    
+    print(f"Job queued: {job_id} for {request.repository} PR #{request.pr_number}")
+    
+    # 5. Return immediately
     return {
-        "message": "Review request received",
-        "repository": request.repository,
-        "pr_number": request.pr_number,
-        "pr_details": final_state.get("pr_details", {}),
-        "pr_diff": final_state.get("pr_diff", ""),
-        "final_review": final_state.get("final_review", {})
+        "message": "Review job queued",
+        "job_id": job_id
     }
+
+@app.get("/review/{job_id}")
+async def get_review_status(job_id: str):
+    # 1. Fetch job data from Redis
+    job_data_str = redis_client.get(f"job:{job_id}")
+    
+    if not job_data_str:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    # 2. Parse and return the current status (and result if completed)
+    return json.loads(job_data_str)
