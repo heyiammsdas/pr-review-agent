@@ -23,10 +23,21 @@ class ReviewIssue(BaseModel):
 class ReviewResponse(BaseModel):
     issues: List[ReviewIssue]
 
-def analyze_diff(pr_diff: str, system_prompt: str) -> dict:
+class AggregatedStatistics(BaseModel):
+    total: int
+    security: int
+    code_quality: int
+    testing: int
+
+class AggregatedReviewResponse(BaseModel):
+    summary: str
+    issues: List[ReviewIssue]
+    statistics: AggregatedStatistics
+
+def analyze_diff(pr_diff: str, system_prompt: str, response_class=ReviewResponse) -> dict:
     """
     Sends the PR diff and a custom system prompt to Gemini, 
-    returning a structured JSON review based on ReviewResponse schema.
+    returning a structured JSON review based on the provided schema.
     """
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_gemini_api_key_here":
@@ -36,7 +47,7 @@ def analyze_diff(pr_diff: str, system_prompt: str) -> dict:
         )
         
     client = genai.Client(api_key=api_key)
-    prompt = f"{system_prompt}\n\nHere is the diff:\n\n{pr_diff}"
+    prompt = f"{system_prompt}\n\nHere is the input data:\n\n{pr_diff}"
     
     max_retries = 3
     base_delay = 2
@@ -48,13 +59,13 @@ def analyze_diff(pr_diff: str, system_prompt: str) -> dict:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=ReviewResponse,
+                    response_schema=response_class,
                 ),
             )
             break
         except errors.APIError as e:
-            # Check for 503 Service Unavailable or 529 Resource Exhausted
-            if e.code in (503, 529):
+            # Check for 429 Too Many Requests, 503 Service Unavailable or 529 Resource Exhausted
+            if e.code in (429, 503, 529):
                 if attempt < max_retries:
                     delay = base_delay * (2 ** attempt)
                     print(f"Gemini API {e.code} Error. Retrying in {delay} seconds (Attempt {attempt+1}/{max_retries})...")
@@ -67,7 +78,6 @@ def analyze_diff(pr_diff: str, system_prompt: str) -> dict:
                         detail="Gemini service is temporarily unavailable due to high demand. Please try again later."
                     )
             else:
-                # E.g. 400 Bad Request, 403 Forbidden
                 print(f"LLM API Error: {str(e)}")
                 raise HTTPException(
                     status_code=500,
@@ -82,7 +92,7 @@ def analyze_diff(pr_diff: str, system_prompt: str) -> dict:
 
     try:
         parsed_data = json.loads(response.text)
-        validated_review = ReviewResponse(**parsed_data)
+        validated_review = response_class(**parsed_data)
         return validated_review.model_dump()
     except (json.JSONDecodeError, ValidationError) as parse_err:
         print(f"LLM Parsing Error: {str(parse_err)}")
