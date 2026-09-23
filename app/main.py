@@ -1,10 +1,11 @@
 import hmac
 import hashlib
 import os
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Header
+from fastapi import FastAPI, Request, HTTPException, Header
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from app.services.review import process_pr_review
+from app.services.job_queue import enqueue_review_job
 
 load_dotenv()
 
@@ -30,17 +31,9 @@ async def create_review(request: ReviewRequest):
         **result
     }
 
-async def run_background_review(repository: str, pr_number: int):
-    try:
-        await process_pr_review(repository, pr_number)
-        print(f"Background review for {repository} PR #{pr_number} completed.")
-    except Exception as e:
-        print(f"Background review for {repository} PR #{pr_number} failed: {e}")
-
 @app.post("/webhook/github")
 async def github_webhook(
     request: Request,
-    background_tasks: BackgroundTasks,
     x_hub_signature_256: str = Header(None)
 ):
     webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
@@ -85,14 +78,13 @@ async def github_webhook(
     if not pr_number or not repository:
         raise HTTPException(status_code=400, detail="Missing PR number or repository in payload")
         
-    print(f"Received GitHub webhook")
+    print(f"Webhook received")
     print(f"Event: {event_type}")
     print(f"Action: {action}")
     print(f"Repository: {repository}")
     print(f"PR: #{pr_number}")
-    print(f"Starting review in background...")
     
-    # Schedule the review to run in the background so GitHub gets a quick 200 response
-    background_tasks.add_task(run_background_review, repository, pr_number)
+    # Enqueue job instead of processing it in FastAPI background task
+    enqueue_review_job(repository, pr_number, action)
     
-    return {"message": "Webhook accepted, review started"}
+    return {"message": "Webhook accepted, job queued"}

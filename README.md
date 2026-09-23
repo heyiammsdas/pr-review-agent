@@ -17,20 +17,27 @@ A Python-based AI system that analyzes GitHub Pull Requests and provides structu
 ## Architecture
 
 ```ascii
-   GitHub PR
-       ↓
-    FastAPI
-       ↓
-   GitHub API
-       ↓
-PR Metadata + Diff
-       ↓
-┌──────────────┬──────────────┬──────────────┐
-│ Security     │ Code Quality │ Testing      │
-│ Agent        │ Agent        │ Agent        │
-└──────────────┴──────────────┴──────────────┘
-       ↓
-Structured Review (JSON)
+      GitHub PR Webhook
+             ↓
+          FastAPI
+             ↓
+        Redis Queue
+             ↓
+      Background Worker
+             ↓
+        Fetch PR diff
+             ↓
+   ┌──────────────┐
+   │Security Agent│
+   ├──────────────┤
+   │Quality Agent │
+   ├──────────────┤
+   │Testing Agent │
+   └──────┬───────┘
+          ↓
+  Aggregator Agent
+          ↓
+  Final Structured Review
 ```
 
 ## Tech Stack
@@ -38,10 +45,12 @@ Structured Review (JSON)
 - **Python** 
 - **FastAPI** (Web Framework)
 - **Pydantic** (Data Validation & Structured Outputs)
+- **Redis** (Background Job Queue)
 - **GitHub REST API** (Diff extraction)
 - **Gemini API** (Google GenAI SDK)
 - **HTTPX** (Asynchronous HTTP requests)
 - **python-dotenv** (Environment variable management)
+- **Docker Compose** (Local Redis Setup)
 
 ## Project Structure
 
@@ -52,16 +61,21 @@ pr-review-agent/
 │   │   ├── __init__.py
 │   │   ├── security_agent.py
 │   │   ├── quality_agent.py
-│   │   └── testing_agent.py
+│   │   ├── testing_agent.py
+│   │   └── aggregator_agent.py
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── github.py
-│   │   └── llm.py
-│   └── main.py
+│   │   ├── llm.py
+│   │   ├── job_queue.py
+│   │   └── review.py
+│   ├── main.py
+│   └── worker.py
 ├── .env
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
+├── docker-compose.yml
 └── README.md
 ```
 
@@ -73,22 +87,28 @@ pr-review-agent/
    cd pr-review-agent
    ```
 
-2. **Create a virtual environment**:
+2. **Start Local Redis**:
+   Make sure you have Docker installed, then run:
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Create a virtual environment**:
    ```bash
    python -m venv .venv
    ```
 
-3. **Activate the virtual environment (Windows)**:
+4. **Activate the virtual environment (Windows)**:
    ```bash
    .\.venv\Scripts\activate
    ```
 
-4. **Install dependencies**:
+5. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-5. **Configure environment variables**:
+6. **Configure environment variables**:
    Create a `.env` file based on `.env.example`:
    ```bash
    cp .env.example .env
@@ -96,10 +116,17 @@ pr-review-agent/
    Add your keys to `.env`:
    - `GITHUB_TOKEN`: Your GitHub Personal Access Token (PAT)
    - `GEMINI_API_KEY`: Your Google AI Studio Gemini API Key
+   - `GITHUB_WEBHOOK_SECRET`: Your secret for webhook verification
+   - `REDIS_URL`: `redis://localhost:6379/0`
 
-6. **Start the FastAPI server**:
+7. **Start the FastAPI server**:
    ```bash
    uvicorn app.main:app --reload
+   ```
+
+8. **Start the Background Worker** (in a separate terminal):
+   ```bash
+   python -m app.worker
    ```
 
 ## Usage
