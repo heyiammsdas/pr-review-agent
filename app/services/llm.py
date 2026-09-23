@@ -49,8 +49,8 @@ def analyze_diff(pr_diff: str, system_prompt: str, response_class=ReviewResponse
     client = genai.Client(api_key=api_key)
     prompt = f"{system_prompt}\n\nHere is the input data:\n\n{pr_diff}"
     
-    max_retries = 3
-    base_delay = 2
+    max_retries = 5
+    base_delay = 5
     
     for attempt in range(max_retries + 1):
         try:
@@ -67,24 +67,37 @@ def analyze_diff(pr_diff: str, system_prompt: str, response_class=ReviewResponse
             # Check for 429 Too Many Requests, 503 Service Unavailable or 529 Resource Exhausted
             if e.code in (429, 503, 529):
                 if attempt < max_retries:
-                    delay = base_delay * (2 ** attempt)
-                    print(f"Gemini API {e.code} Error. Retrying in {delay} seconds (Attempt {attempt+1}/{max_retries})...")
+                    error_msg = getattr(e, 'message', str(e))
+                    
+                    import re
+                    import random
+                    
+                    # Look for explicit retry delay in the error message (e.g. "Please retry in 17.574s.")
+                    match = re.search(r"retry in (\d+(?:\.\d+)?)s", error_msg)
+                    if match:
+                        delay = float(match.group(1)) + random.uniform(0.5, 2.0)
+                    else:
+                        delay = base_delay * (2 ** attempt) + random.uniform(1.0, 5.0)
+                        
+                    print(f"Gemini API {e.code} Error: {error_msg}. Retrying in {delay:.2f} seconds (Attempt {attempt+1}/{max_retries})...", flush=True)
                     time.sleep(delay)
                     continue
                 else:
-                    print(f"Gemini API {e.code} Error: Max retries exceeded.")
+                    error_msg = getattr(e, 'message', str(e))
+                    print(f"Gemini API {e.code} Error: Max retries exceeded. Details: {error_msg}", flush=True)
                     raise HTTPException(
                         status_code=503,
                         detail="Gemini service is temporarily unavailable due to high demand. Please try again later."
                     )
             else:
-                print(f"LLM API Error: {str(e)}")
+                error_msg = getattr(e, 'message', str(e))
+                print(f"LLM API Error: {error_msg}", flush=True)
                 raise HTTPException(
                     status_code=500,
                     detail="Error generating AI review from Gemini"
                 )
         except Exception as e:
-            print(f"LLM General Error: {str(e)}")
+            print(f"LLM General Error: {type(e).__name__} - {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail="Error generating AI review from Gemini"
