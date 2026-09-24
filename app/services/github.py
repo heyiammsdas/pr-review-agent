@@ -17,7 +17,6 @@ def get_pr_details(repository: str, pr_number: int) -> dict:
         "X-GitHub-Api-Version": "2022-11-28",
     }
     
-    # Only add authorization if the token is available
     if github_token:
         headers["Authorization"] = f"Bearer {github_token}"
 
@@ -37,9 +36,7 @@ def get_pr_details(repository: str, pr_number: int) -> dict:
     except httpx.HTTPStatusError as e:
         error_msg = "GitHub API Error"
         try:
-            # Attempt to parse GitHub's JSON error message securely
-            error_data = e.response.json()
-            error_msg = error_data.get("message", "GitHub API Error")
+            error_msg = e.response.json().get("message", "GitHub API Error")
         except Exception:
             pass
             
@@ -60,7 +57,6 @@ def get_pr_diff(repository: str, pr_number: int) -> str:
     github_token = os.getenv("GITHUB_TOKEN")
     
     headers = {
-        # Using the v3.diff media type returns the raw diff text
         "Accept": "application/vnd.github.v3.diff",
         "X-GitHub-Api-Version": "2022-11-28",
     }
@@ -73,15 +69,11 @@ def get_pr_diff(repository: str, pr_number: int) -> str:
     try:
         response = httpx.get(url, headers=headers, timeout=10.0)
         response.raise_for_status()
-        
-        # The diff is returned as plain text
         return response.text
     except httpx.HTTPStatusError as e:
         error_msg = "GitHub API Error fetching diff"
         try:
-            # Note: For diff endpoints, errors might still be returned as JSON.
-            error_data = e.response.json()
-            error_msg = error_data.get("message", "GitHub API Error fetching diff")
+            error_msg = e.response.json().get("message", "GitHub API Error fetching diff")
         except Exception:
             pass
             
@@ -94,3 +86,39 @@ def get_pr_diff(repository: str, pr_number: int) -> str:
             status_code=500, 
             detail="Error connecting to GitHub API for diff"
         )
+
+def post_pr_comment(repository: str, pr_number: int, comment: str) -> str:
+    """
+    Posts a Markdown comment to the Pull Request.
+    Returns the HTML URL of the created comment.
+    """
+    github_token = os.getenv("GITHUB_TOKEN")
+    if not github_token:
+        print("[GitHub Service] GITHUB_TOKEN not found, skipping PR comment posting.")
+        return ""
+
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Authorization": f"Bearer {github_token}"
+    }
+
+    url = f"https://api.github.com/repos/{repository}/issues/{pr_number}/comments"
+    payload = {"body": comment}
+
+    try:
+        response = httpx.post(url, headers=headers, json=payload, timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("html_url", "")
+    except httpx.HTTPStatusError as e:
+        error_msg = f"GitHub API Error: {e.response.status_code}"
+        try:
+            error_msg = e.response.json().get("message", error_msg)
+        except Exception:
+            pass
+        print(f"[GitHub Service] Failed to post comment: {error_msg}")
+        return ""
+    except httpx.RequestError as e:
+        print("[GitHub Service] Error connecting to GitHub API to post comment.")
+        return ""

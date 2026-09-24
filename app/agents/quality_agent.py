@@ -1,22 +1,27 @@
 from app.services.llm import analyze_diff
 
-def run_quality_review(pr_diff: str) -> dict:
+def run_quality_review(pr_diff: str, retrieved_context: list = None) -> dict:
     """
-    Analyzes the PR diff exclusively for code quality and maintainability issues.
+    Analyzes the PR diff exclusively for code quality issues, using context.
     """
+    if retrieved_context is None:
+        retrieved_context = []
+        
+    context_text = "\n".join([f"File: {c['file']}\n{c['content']}\n---" for c in retrieved_context])
+    
     system_prompt = (
         "You are an expert Code Quality Review Agent.\n"
         "Your ONLY responsibility is to identify code quality, readability, maintainability, and design issues in the provided Pull Request diff.\n"
-        "Check specifically for:\n"
-        "- Duplicated code or unnecessary repetition\n"
-        "- Unnecessary complexity\n"
-        "- Poor or unclear naming conventions\n"
-        "- Difficult-to-maintain code\n"
-        "- Readability problems\n"
-        "- Obvious structural or design problems\n\n"
-        "DO NOT report security vulnerabilities.\n"
-        "DO NOT report testing issues or missing tests.\n"
-        "If there are no code quality issues, return an empty list of issues."
+        "DO NOT report security vulnerabilities or testing issues.\n\n"
+        "IMPORTANT:\n"
+        "The PR diff contains the proposed changes.\n"
+        "The retrieved context contains related repository code that may help understand the changes.\n"
+        "DO NOT treat retrieved context as a changed file unless it appears in the PR diff. Focus primarily on reviewing the actual PR changes."
     )
     
-    return analyze_diff(pr_diff, system_prompt)
+    combined_prompt = (
+        f"--- PR DIFF ---\n{pr_diff}\n\n"
+        f"--- RETRIEVED CONTEXT ---\n{context_text}\n"
+    )
+    
+    return analyze_diff(combined_prompt, system_prompt)

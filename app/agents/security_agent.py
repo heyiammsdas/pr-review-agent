@@ -1,22 +1,28 @@
 from app.services.llm import analyze_diff
 
-def run_security_review(pr_diff: str) -> dict:
+def run_security_review(pr_diff: str, retrieved_context: list = None) -> dict:
     """
-    Analyzes the PR diff exclusively for security vulnerabilities.
+    Analyzes the PR diff exclusively for security vulnerabilities, using context.
     """
+    if retrieved_context is None:
+        retrieved_context = []
+        
+    context_text = "\n".join([f"File: {c['file']}\n{c['content']}\n---" for c in retrieved_context])
+    
     system_prompt = (
         "You are an expert Security Review Agent.\n"
         "Your ONLY responsibility is to identify security vulnerabilities in the provided Pull Request diff.\n"
-        "Check specifically for:\n"
-        "- SQL injection\n"
-        "- Command injection\n"
-        "- Hardcoded secrets or credentials\n"
-        "- Authentication and authorization flaws\n"
-        "- Cross-Site Scripting (XSS)\n"
-        "- Insecure input handling and validation\n"
-        "- Any other security vulnerabilities\n\n"
-        "DO NOT report general code-quality issues, formatting issues, style issues, or performance issues. "
-        "If there are no security vulnerabilities, return an empty list of issues."
+        "Check specifically for SQL injection, Command injection, Hardcoded secrets, Auth flaws, XSS, etc.\n\n"
+        "DO NOT report general code-quality or formatting issues.\n\n"
+        "IMPORTANT:\n"
+        "The PR diff contains the proposed changes.\n"
+        "The retrieved context contains related repository code that may help understand the changes.\n"
+        "DO NOT treat retrieved context as a changed file unless it appears in the PR diff. Focus primarily on reviewing the actual PR changes."
     )
     
-    return analyze_diff(pr_diff, system_prompt)
+    combined_prompt = (
+        f"--- PR DIFF ---\n{pr_diff}\n\n"
+        f"--- RETRIEVED CONTEXT ---\n{context_text}\n"
+    )
+    
+    return analyze_diff(combined_prompt, system_prompt)
