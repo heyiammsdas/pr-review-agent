@@ -1,40 +1,13 @@
+import os
 import json
 import unittest
-from unittest.mock import patch
 from fastapi.testclient import TestClient
 
-# Mock the redis client to prevent actual redis connections
-class FakeRedis:
-    def __init__(self):
-        self.store = {}
-        self.queue = []
-        
-    def set(self, key, value):
-        self.store[key] = value
-        
-    def get(self, key):
-        return self.store.get(key)
-        
-    def lpush(self, queue_name, item):
-        self.queue.insert(0, item)
-        
-    def brpop(self, queue_name, timeout=0):
-        if self.queue:
-            return (queue_name, self.queue.pop())
-        return None
+from tests.test_redis_pipeline import fake_redis
+from app.main import app
+from app.services.webhook import generate_test_signature
 
-fake_redis = FakeRedis()
-
-def mock_get_redis_connection():
-    return fake_redis
-
-import os
 os.environ['GITHUB_WEBHOOK_SECRET'] = 'test_secret'
-
-with patch('app.services.redis_client.get_redis_connection', side_effect=mock_get_redis_connection):
-    from app.main import app
-    from app.services.webhook import generate_test_signature
-
 client = TestClient(app)
 
 class TestWebhook(unittest.TestCase):

@@ -1,243 +1,335 @@
 # AI PR Review Agent
 
-A Python-based AI Pull Request review system that analyzes GitHub Pull Requests using specialized AI review agents. The system uses FastAPI, Gemini, and LangGraph to organize the review workflow.
+## Overview
 
-## 1. Overview
+The AI PR Review Agent is an automated code review assistant that listens for GitHub Pull Request events via webhooks, analyzes the changed files using an intelligent multi-agent LangGraph workflow, and posts a structured review directly as a GitHub comment.
 
-The system takes a GitHub Pull Request, retrieves its details and code diff, and uses multiple specialized review agents to analyze different aspects of the changes.
+It features a Retrieval-Augmented Generation (RAG) system utilizing FAISS to retrieve relevant repository context, ensuring that the agents (Security, Quality, and Testing) understand the broader codebase before leaving file- and line-specific feedback.
 
-The current specialized agents are:
-- **Security Agent**
-- **Code Quality Agent**
-- **Testing Agent**
-
-Their results are passed to an Aggregator Agent that produces a structured final review.
-
-## 2. Current Architecture
+## Architecture
 
 ```text
+Developer
+   ↓
 GitHub Pull Request
-        ↓
-     FastAPI
-        ↓
-   GitHub API
-        ↓
-     PR Diff
-        ↓
-   LangGraph Workflow
-        ↓
- ┌──────┼──────┐
- ↓      ↓      ↓
-Security Quality Testing
- Agent    Agent   Agent
- └──────┼──────┘
-        ↓
-   Aggregator
-        ↓
-  Final Review
+   ↓
+GitHub Webhook
+   ↓
+FastAPI
+   ↓
+Redis Queue
+   ↓
+Background Worker
+   ↓
+LangGraph
+   ↓
+RAG / FAISS (Repository Context)
+   ↓
+┌────────────┬────────────┬────────────┐
+│ Security   │ Quality    │ Testing    │
+│ Agent      │ Agent      │ Agent      │
+└────────────┴────────────┴────────────┘
+             ↓
+         Aggregator
+             ↓
+       Final AI Review
+             ↓
+      GitHub PR Comment
 ```
 
-## 3. Features
+## Key Features
 
-- GitHub Pull Request retrieval
-- Pull Request diff retrieval
-- FastAPI backend
-- Gemini API integration
-- Security review agent
-- Code quality review agent
-- Testing review agent
-- Aggregator agent
-- Structured review output
-- LangGraph-based orchestration
-- Redis-based background job queue
-- Mock tests for LangGraph workflow
-- Environment-based API key configuration
+- **Webhook Integration**: Listens to GitHub PR `opened`, `synchronize`, and `reopened` events.
+- **Asynchronous Processing**: Uses Redis for queueing review jobs, allowing the API to respond immediately.
+- **Multi-Agent Architecture**: Separate AI agents focus on Security, Code Quality, and Testing.
+- **Context-Aware (RAG)**: Embeds the entire repository using FAISS to provide agents with relevant project context.
+- **File and Line Level Findings**: Precisely maps findings to the exact file and line number in the unified git diff.
+- **Automated Comments**: Posts nicely formatted Markdown comments back to the GitHub PR.
+- **Dockerized**: Fully containerized setup for API, Worker, and Redis.
 
-## 4. Tech Stack
+## Tech Stack
 
 | Technology | Purpose |
 |------------|---------|
-| Python | Main programming language |
-| FastAPI | Backend API |
-| Redis | Job queue and background state storage |
-| GitHub REST API | Pull Request data and diff |
-| Gemini API | AI analysis |
-| LangGraph | Agent workflow orchestration |
-| Pydantic | Structured data validation |
-| HTTPX | HTTP requests |
-| python-dotenv | Environment variables |
+| FastAPI | Web server & Webhook endpoint |
+| Redis | Job queue and state management |
+| LangGraph | Orchestration of the multi-agent workflow |
+| Google Gemini API | Large Language Model backing the review agents |
+| FAISS & NumPy | Vector database for RAG context retrieval |
+| Docker & Compose | Containerization and local orchestration |
+| Pytest | Mock, unit, and integration testing |
 
-## 5. LangGraph Workflow
+## How It Works
 
-LangGraph is used to organize the review process as a workflow.
+1. A developer creates or updates a Pull Request on GitHub.
+2. GitHub sends a webhook payload to the FastAPI `/webhook/github` endpoint.
+3. The API verifies the signature, creates a unique `job_id`, queues it in Redis, and returns `200 OK`.
+4. A background Worker pops the job from Redis and triggers the LangGraph workflow.
+5. The system fetches the PR details and the raw diff from GitHub.
+6. The RAG pipeline performs a similarity search over the repository files using FAISS to find context.
+7. The Security, Quality, and Testing agents run in parallel, analyzing the code changes (and context) to find issues.
+8. The Aggregator agent compiles the findings, validates line numbers against the Git diff, and produces a final summary.
+9. A structured Markdown comment is posted back to the PR on GitHub.
+10. The job status is marked as `completed` in Redis.
 
-Each specialized agent is represented as a node, and a shared state carries the Pull Request information and review results between nodes.
-
-- **State**: A shared dictionary structure that holds the PR details, the code diff, and the outputs from each specialized agent.
-- **Nodes**: Individual Python functions that execute a step in the workflow (e.g., retrieving the PR context or running a specific AI agent).
-- **Edges**: The paths that connect the nodes. Our workflow branches in parallel to the specialized agents, and then converges them.
-- **Aggregator**: The final node that waits for all parallel agents to finish, reads their findings from the state, and combines them into a single, deduplicated structured review.
-
-## 6. Project Structure
+## Project Structure
 
 ```text
 pr-review-agent/
-├── .env
-├── .env.example
-├── .gitignore
-├── README.md
-├── requirements.txt
-├── worker.py
-├── tests/
-│   ├── test_redis_pipeline.py
-│   └── test_review_graph.py
-└── app/
-    ├── main.py
-    ├── agents/
-    │   ├── __init__.py
-    │   ├── aggregator_agent.py
-    │   ├── quality_agent.py
-    │   ├── security_agent.py
-    │   └── testing_agent.py
-    ├── graph/
-    │   └── review_graph.py
-    └── services/
-        ├── __init__.py
-        ├── github.py
-        ├── job_queue.py
-        ├── llm.py
-        ├── redis_client.py
-        └── review.py
+├── app/
+│   ├── agents/          # Security, Quality, Testing, and Aggregator agents
+│   ├── graph/           # LangGraph workflow definition
+│   ├── rag/             # Loader, Chunker, Embedder, and FAISS Indexer
+│   ├── services/        # GitHub API, LLM, Job Queue, Diff Parser, Formatter
+│   ├── main.py          # FastAPI application
+│   └── worker.py        # Background job processor
+├── tests/               # Unit, integration, and mock tests
+├── .env.example         # Template for environment variables
+├── .dockerignore        # Docker build exclusions
+├── .gitignore           # Git tracking exclusions
+├── docker-compose.yml   # Multi-container setup
+├── Dockerfile           # Unified image for API and Worker
+└── requirements.txt     # Python dependencies
 ```
 
-## 7. Setup
+## Prerequisites
 
-Run the following commands in PowerShell (Windows-friendly setup):
+- Python 3.12 or 3.13
+- Docker and Docker Compose (optional, for containerized setup)
+- Git
+- GitHub account and a Personal Access Token (PAT)
+- Google Gemini API Key
 
-```powershell
-git clone <repository-url>
-cd pr-review-agent
+## Environment Variables
 
-python -m venv .venv
-.\.venv\Scripts\activate
+Create a `.env` file in the root directory (do not commit this file):
 
-pip install -r requirements.txt
-```
-
-**Environment Variables:**
-Create your `.env` file from the example template:
-```powershell
-copy .env.example .env
-```
-
-Open `.env` and configure your API keys:
-```env
+```properties
 GITHUB_TOKEN=your_github_token_here
 GEMINI_API_KEY=your_gemini_api_key_here
-```
-*(Real API keys must never be committed to source control!)*
-
-## 8. Running the Application
-
-To start the FastAPI backend server:
-```powershell
-uvicorn app.main:app --port 8000
+GITHUB_WEBHOOK_SECRET=your_webhook_secret_here
+REDIS_URL=redis://localhost:6379/0
 ```
 
-To process background jobs, start the worker in a separate terminal:
-```powershell
-python worker.py
-```
+## Local Setup
 
-## 9. API Usage
+1. **Clone the repository:**
+   ```bash
+   git clone <repo-url>
+   cd pr-review-agent
+   ```
+
+2. **Create a virtual environment:**
+   ```bash
+   python -m venv .venv
+   ```
+
+3. **Activate the environment:**
+   - Windows: `.venv\Scripts\activate`
+   - Linux/Mac: `source .venv/bin/activate`
+
+4. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+5. **Configure environment:**
+   Copy `.env.example` to `.env` and fill in your actual API keys.
+
+6. **Start Redis** (If running locally without Docker).
+
+7. **Start the FastAPI server:**
+   ```bash
+   uvicorn app.main:app --host 0.0.0.0 --port 8000
+   ```
+
+8. **Start the Worker:**
+   ```bash
+   python -m app.worker
+   ```
+
+## Docker Setup
+
+To run the entire stack (API, Worker, and Redis) using Docker Compose:
+
+1. **Build and start the containers:**
+   ```bash
+   docker compose up --build -d
+   ```
+
+2. **View logs:**
+   ```bash
+   docker compose logs -f
+   ```
+
+3. **Stop the containers:**
+   ```bash
+   docker compose down
+   ```
+
+## API Endpoints
+
+### `GET /health`
+- **Purpose**: Verifies that the FastAPI server is running.
+- **Response**: `{"status": "ok"}`
 
 ### `POST /review`
-Submits a Pull Request for review.
+- **Purpose**: Manually trigger a PR review job.
+- **Request**:
+  ```json
+  {
+    "repository": "owner/repo",
+    "pr_number": 42
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "job_id": "uuid-string",
+    "status": "queued"
+  }
+  ```
 
-**Example Request:**
-```json
-{
-  "repository": "owner/repository",
-  "pr_number": 1
-}
+### `GET /review/{job_id}`
+- **Purpose**: Check the status of a queued or completed review job.
+- **Response**:
+  ```json
+  {
+    "job_id": "uuid-string",
+    "status": "completed",
+    "result": { ... }
+  }
+  ```
+
+### `POST /webhook/github`
+- **Purpose**: Endpoint for GitHub to send PR events.
+- **Headers**: Must include valid `X-Hub-Signature-256`.
+- **Response**: `{"message": "Webhook received", "job_id": "uuid-string", "status": "queued"}`
+
+## GitHub Webhook Setup
+
+1. Go to your GitHub repository -> **Settings** -> **Webhooks** -> **Add webhook**.
+2. **Payload URL**: `https://<your-domain>/webhook/github`
+3. **Content type**: `application/json`
+4. **Secret**: Enter the exact string from your `GITHUB_WEBHOOK_SECRET` environment variable.
+5. **Which events**: Select **Let me select individual events**, and check **Pull requests**.
+6. Ensure the webhook is marked **Active**.
+
+## RAG Pipeline
+
+The Retrieval-Augmented Generation (RAG) system enables the agents to understand the repository context:
+1. **File Loading**: Downloads and reads the codebase structure.
+2. **Chunking**: Splits the codebase into manageable segments.
+3. **Embeddings**: Uses the Gemini API to create vector embeddings for the chunks.
+4. **FAISS**: Indexes the embeddings for fast vector similarity search.
+5. **Similarity Search**: When a PR is reviewed, the diff is used as a query to find the most relevant contextual files.
+
+## LangGraph Workflow
+
+The workflow relies on a state graph:
+- **State**: Holds `pr_details`, `pr_diff`, and the individual reviews.
+- **Nodes**:
+  - `run_security_review`
+  - `run_quality_review`
+  - `run_testing_review`
+  - `run_aggregator_agent`
+
+The security, quality, and testing nodes execute in parallel. Their outputs are then passed to the aggregator node, which normalizes the findings and validates the line numbers against the parsed diff.
+
+## AI Review Agents
+
+- **Security Agent**: Scans for vulnerabilities, hardcoded secrets, and unsafe practices.
+- **Quality Agent**: Reviews for code readability, maintainability, and anti-patterns.
+- **Testing Agent**: Identifies missing tests and edge cases.
+- **Aggregator**: Consolidates the outputs, removes duplicates, and ensures all file/line mappings strictly adhere to the git diff.
+
+## Review Output Example
+
+```markdown
+## 🤖 AI PR Review
+
+### Summary
+
+This PR introduces authentication logic but contains a critical security flaw.
+
+### 🔴 Security
+
+**`src/auth.py:42`**
+
+**Hardcoded secret**
+
+A secret appears to be hardcoded in the changed code.
+
+**Suggestion:** Move the secret to an environment variable.
+
+### 🟡 Code Quality
+
+**`src/auth.py:15`**
+
+**Complex Function**
+
+This function has too many nested loops.
+
+**Suggestion:** Refactor into smaller helper functions.
+
+### Testing
+
+No testing issues found.
+
+### Review Statistics
+
+| Category | Count |
+|---|---:|
+| Security | 1 |
+| Code Quality | 1 |
+| Testing | 0 |
+| Total | 2 |
 ```
 
-**Internal Process:**
-1. The API validates the payload and generates a unique job ID.
-2. It stores the initial job state (`queued`) in Redis and pushes the ID to the processing queue.
-3. The API immediately returns the `job_id` without waiting for the LLMs.
-4. The background `worker.py` pops the job from Redis, retrieves the PR data, executes the parallel LangGraph review agents, and updates the final result in Redis.
+## Testing
 
-## 10. Testing
+Run tests using pytest:
 
-The mock tests verify the LangGraph architecture and the Redis worker pipeline. The mock tests do not call Gemini or external services (like GitHub), allowing you to safely verify the workflow routing.
-
-Run the tests using your active virtual environment:
-```powershell
-python -m unittest tests.test_review_graph
-python -m unittest tests.test_redis_pipeline
+```bash
+python -m pytest tests
 ```
 
-## 11. Environment Variables
+- **Unit / Mock Tests**: Extensive tests exist for diff parsing, finding validation, and the graph pipeline using `unittest.mock`. External API calls (Gemini/GitHub) are thoroughly mocked out so tests run locally without credentials or quota limitations.
 
-- `GITHUB_TOKEN`: A GitHub Personal Access Token used to retrieve the PR diffs.
-- `GEMINI_API_KEY`: Your Google Gemini API key used by the agents for analysis.
+## Security
 
-## 12. Current Development Status
+- `.env` files are ignored by git and never committed.
+- API keys are exclusively accessed via environment variables.
+- GitHub webhooks require a strict SHA-256 signature verification.
+- Internal error traces are masked from the final PR comments to avoid leaking infrastructure details.
 
-**Completed:**
-- [x] FastAPI backend
+## Development Status
+
+- [x] FastAPI skeleton
 - [x] GitHub API integration
-- [x] PR diff retrieval
-- [x] Gemini integration
-- [x] Security Agent
-- [x] Quality Agent
-- [x] Testing Agent
-- [x] Aggregator Agent
-- [x] LangGraph workflow
-- [x] LangGraph mock testing
-- [x] Redis job queue
-- [x] Background worker
+- [x] Redis Job Queue & Worker
+- [x] Webhook Signature Verification
+- [x] LangGraph Multi-Agent Orchestration
+- [x] Gemini API Integration
+- [x] RAG / FAISS Implementation
+- [x] File and Line-level Mapping
+- [x] Automated PR Comments
+- [x] Dockerization
 
-**In progress:**
-- [ ] GitHub Webhooks
-- [ ] Repository RAG
-- [ ] Vector search
-- [ ] Automatic GitHub PR comments
-- [ ] Docker/deployment
+## Roadmap
 
-## 13. Roadmap
+- Implement advanced caching for the FAISS index across multiple PRs for the same repo.
+- Support for inline comments directly on GitHub PR lines via the GitHub Review API.
 
-- **Phase 1** — Core PR Review
-- **Phase 2** — Multi-Agent Review
-- **Phase 3** — LangGraph
-- **Phase 4** — Redis Background Jobs
-- **Phase 5** — GitHub Webhooks
-- **Phase 6** — Repository RAG
-- **Phase 7** — Automatic PR Comments
-- **Phase 8** — Docker & Deployment
+## License
 
-## 14. Learning Goals
+License not yet specified.
 
-This project is being built to learn:
-- LLM application development
-- AI agents
-- multi-agent systems
-- LangGraph
-- GitHub API
-- asynchronous/background processing
-- Redis
-- RAG
-- vector search
-- webhook-driven systems
-- AI application architecture
+## Reviewer Guide
 
-## 15. How I Explain This Project
-
-This project is an AI-powered Pull Request reviewer built with Python and FastAPI. It uses LangGraph to orchestrate a multi-agent workflow where specialized LLMs analyze code for security vulnerabilities, quality issues, and missing tests in parallel. The system utilizes Redis for a background job queue, decoupling the heavy AI processing from the web API. Ultimately, an aggregator agent synthesizes the findings into a single, cohesive code review.
-
-## 16. Security
-
-- `.env` contains secrets and must not be committed.
-- `.env.example` contains placeholders.
-- API keys should never be exposed in logs or source code.
+To quickly run this project to evaluate it:
+1. Clone the repo and provide an `.env` with a `GITHUB_TOKEN` and `GEMINI_API_KEY`.
+2. Run `docker compose up --build -d`.
+3. Test locally using:
+   `curl -X POST http://localhost:8000/review -H "Content-Type: application/json" -d "{\"repository\": \"owner/repo\", \"pr_number\": 1}"`
+4. Use `docker compose logs -f worker` to watch the AI agents process the review!
