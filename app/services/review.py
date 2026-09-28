@@ -48,7 +48,7 @@ async def process_pr_review(repository: str, pr_number: int) -> dict:
     agg_start_time = time.time()
     try:
         final_review = await asyncio.to_thread(
-            run_aggregator_agent, security_review, quality_review, testing_review
+            run_aggregator_agent, security_review, quality_review, testing_review, pr_diff
         )
         agg_duration = time.time() - agg_start_time
         print(f"[Aggregator Agent] Finished successfully in {agg_duration:.2f}s")

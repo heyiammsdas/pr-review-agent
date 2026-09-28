@@ -86,7 +86,8 @@ class TestReviewGraph(unittest.IsolatedAsyncioTestCase):
         mock_aggregator.assert_called_once_with(
             {"issues": [{"issue": "mock_security_issue"}]},
             {"issues": [{"issue": "mock_quality_issue"}]},
-            {"issues": [{"issue": "mock_testing_issue"}]}
+            {"issues": [{"issue": "mock_testing_issue"}]},
+            "diff --git a/test.py b/test.py\n+print('mocked')"
         )
         
         # Verify final review state

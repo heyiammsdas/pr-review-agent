@@ -1,10 +1,13 @@
 import json
 from app.services.llm import analyze_diff, AggregatedReviewResponse
 
-def run_aggregator_agent(security_review: dict, quality_review: dict, testing_review: dict) -> dict:
+def run_aggregator_agent(security_review: dict, quality_review: dict, testing_review: dict, pr_diff: str = "") -> dict:
     """
     Aggregates findings from the specialized agents into a single cohesive structured response.
+    Validates findings against the PR diff to ensure line numbers are accurate.
     """
+    from app.services.diff_parser import parse_diff, validate_finding
+    
     system_prompt = (
         "You are an expert Aggregator Agent.\n"
         "Your ONLY responsibility is to aggregate and organize findings from the Security, Quality, and Testing agents.\n"
@@ -26,4 +29,15 @@ def run_aggregator_agent(security_review: dict, quality_review: dict, testing_re
         "testing_findings": testing_review
     }, indent=2)
     
-    return analyze_diff(combined_inputs, system_prompt, response_class=AggregatedReviewResponse)
+    final_review = analyze_diff(combined_inputs, system_prompt, response_class=AggregatedReviewResponse)
+    
+    if pr_diff:
+        parsed_diff = parse_diff(pr_diff)
+        if "issues" in final_review:
+            validated_issues = []
+            for issue in final_review["issues"]:
+                validated_issue = validate_finding(issue, parsed_diff)
+                validated_issues.append(validated_issue)
+            final_review["issues"] = validated_issues
+            
+    return final_review

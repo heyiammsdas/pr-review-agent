@@ -29,10 +29,9 @@ class TestGitHubComment(unittest.TestCase):
         md = format_review_as_markdown(mock_review)
         self.assertIn("## 🤖 AI PR Review", md)
         self.assertIn("The PR adds a new print statement.", md)
-        self.assertIn("#### 🔴 High", md)
-        self.assertIn("- **Security**", md)
-        self.assertIn("`src/auth.py`", md)
-        self.assertIn("Hardcoded secret", md)
+        self.assertIn("### 🔴 Security", md)
+        self.assertIn("**`src/auth.py:42`**", md)
+        self.assertIn("**Hardcoded secret**", md)
         self.assertIn("| Security | 1 |", md)
         
     @patch('app.services.github.httpx.post')

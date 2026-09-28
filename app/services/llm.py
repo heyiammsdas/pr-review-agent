@@ -1,7 +1,7 @@
 import os
 import json
 import time
-from typing import List, Literal
+from typing import List, Literal, Optional
 from pydantic import BaseModel, ValidationError
 from google import genai
 from google.genai import types
@@ -15,10 +15,11 @@ class ReviewIssue(BaseModel):
     severity: Literal["critical", "high", "medium", "low"]
     category: Literal["security", "bug", "code_quality", "performance", "testing"]
     file: str
-    line: int
-    issue: str
-    explanation: str
+    line: Optional[int] = None
+    title: str
+    description: str
     suggestion: str
+    is_contextual: Optional[bool] = False
 
 class ReviewResponse(BaseModel):
     issues: List[ReviewIssue]

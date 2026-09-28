@@ -98,7 +98,8 @@ async def aggregator_node(state: ReviewState) -> dict:
             run_aggregator_agent,
             state["security_review"],
             state["quality_review"],
-            state["testing_review"]
+            state["testing_review"],
+            state["pr_diff"]
         )
     except Exception as e:
         print(f"[Graph Node] aggregator failed: {e}")
