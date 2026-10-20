@@ -3,6 +3,7 @@ import time
 import uuid
 import json
 from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -12,6 +13,14 @@ from app.services.webhook import verify_github_signature
 load_dotenv()
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ReviewRequest(BaseModel):
     repository: str
